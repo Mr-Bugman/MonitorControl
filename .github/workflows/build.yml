@@ -25,6 +25,15 @@ jobs:
             COMPILER_INDEX_STORE_ENABLE=NO \
             2>&1 | tee build.log | grep -E "error|warning: |BUILD" | tail -40
 
+      - name: Re-sign everything ad-hoc (fix Team ID mismatch)
+        run: |
+          codesign --remove-signature build/Build/Products/Release/MonitorControl.app 2>/dev/null || true
+          find build/Build/Products/Release/MonitorControl.app -name "*.framework" -o -name "*.app" -o -name "*.xpc" | while read -r f; do
+            codesign --force --sign - "$f" || true
+          done
+          codesign --force --deep --sign - build/Build/Products/Release/MonitorControl.app
+          codesign --verify --deep --strict build/Build/Products/Release/MonitorControl.app
+
       - name: Verify product
         run: |
           ls -d build/Build/Products/Release/MonitorControl.app
