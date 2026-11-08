@@ -30,6 +30,9 @@ enum PrefKey: String {
   /// Don't listen to F14/F15
   case disableAltBrightnessKeys
 
+  /// Scheduled brightness rules (JSON array)
+  case scheduledBrightnessRules
+
   /// Hide brightness sliders
   case hideBrightness
 

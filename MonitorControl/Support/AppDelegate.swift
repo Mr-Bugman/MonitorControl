@@ -30,6 +30,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   var startupActionWriteCounter: Int = 0
   var audioPlayer: AVAudioPlayer?
   let updaterController = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: UpdaterDelegate(), userDriverDelegate: nil)
+  lazy var scheduledBrightnessPrefsVc = ScheduledBrightnessPrefsViewController()
 
   var settingsPaneStyle: Settings.Style {
     if !DEBUG_MACOS10, #available(macOS 11.0, *) {
@@ -45,6 +46,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
       menuslidersPrefsVc!,
       keyboardPrefsVc!,
       displaysPrefsVc!,
+      scheduledBrightnessPrefsVc,
       aboutPrefsVc!,
     ],
     style: self.settingsPaneStyle,
@@ -66,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     CGDisplayRegisterReconfigurationCallback({ _, _, _ in app.displayReconfigured() }, nil)
     self.configure(firstrun: true)
     DisplayManager.shared.createGammaActivityEnforcer()
+    ScheduledBrightnessManager.shared.start()
     self.updaterController.startUpdater()
   }
 
