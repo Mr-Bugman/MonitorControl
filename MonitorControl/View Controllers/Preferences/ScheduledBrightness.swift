@@ -66,7 +66,7 @@ final class ScheduledBrightnessManager {
   func applyBrightness(_ percent: Int) {
     let value = min(max(Float(percent) / 100.0, 0.0), 1.0)
     DispatchQueue.main.async {
-      os_log("Scheduled brightness: applying %d%% to all affected displays.", type: .info, percent)
+      os_log("Scheduled brightness: applying %d percent to all affected displays.", type: .info, percent)
       if let displays = DisplayManager.shared.getAffectedDisplays(isBrightness: true) {
         for display in displays {
           _ = display.setSmoothBrightness(value)
@@ -172,7 +172,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   private func makeRow(rule: BrightnessSchedule) -> NSView {
     let enableSwitch = NSButton(title: "", target: self, action: #selector(self.ruleToggled(_:)))
     if #available(macOS 11.0, *) {
-      enableSwitch.buttonType = .switch
+      enableSwitch.setButtonType(.switch)
     } else {
       enableSwitch.setButtonType(.checkbox)
     }
@@ -182,7 +182,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
 
     let datePicker = NSDatePicker()
     datePicker.datePickerStyle = .clockAndCalendar
-    datePicker.datePickerElements = [.hour, .minute]
+    datePicker.datePickerElements = .hourMinute
     datePicker.datePickerMode = .single
     datePicker.timeZone = TimeZone.current
     var components = DateComponents()
@@ -231,26 +231,29 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   }
 
   @objc private func ruleDeleted(_ sender: NSButton) {
-    guard let id = self.controlID(sender), var rules = ScheduledBrightnessManager.loadRules(), let index = self.rule(withID: id) else {
+    guard let id = self.controlID(sender), let index = self.rule(withID: id) else {
       return
     }
+    var rules = ScheduledBrightnessManager.loadRules()
     rules.remove(at: index)
     ScheduledBrightnessManager.saveRules(rules)
     self.reloadRules()
   }
 
-  @objc private func ruleToggled(_ sender: NSControl) {
-    guard let id = self.controlID(sender), var rules = ScheduledBrightnessManager.loadRules(), let index = self.rule(withID: id) else {
+  @objc private func ruleToggled(_ sender: NSButton) {
+    guard let id = self.controlID(sender), let index = self.rule(withID: id) else {
       return
     }
+    var rules = ScheduledBrightnessManager.loadRules()
     rules[index].enabled = sender.state == .on
     ScheduledBrightnessManager.saveRules(rules)
   }
 
   @objc private func ruleTimeChanged(_ sender: NSDatePicker) {
-    guard let id = self.controlID(sender), var rules = ScheduledBrightnessManager.loadRules(), let index = self.rule(withID: id) else {
+    guard let id = self.controlID(sender), let index = self.rule(withID: id) else {
       return
     }
+    var rules = ScheduledBrightnessManager.loadRules()
     let components = Calendar.current.dateComponents([.hour, .minute], from: sender.dateValue)
     rules[index].hour = components.hour ?? 0
     rules[index].minute = components.minute ?? 0
@@ -258,9 +261,10 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   }
 
   @objc private func ruleBrightnessChanged(_ sender: NSSlider) {
-    guard let id = self.controlID(sender), var rules = ScheduledBrightnessManager.loadRules(), let index = self.rule(withID: id) else {
+    guard let id = self.controlID(sender), let index = self.rule(withID: id) else {
       return
     }
+    var rules = ScheduledBrightnessManager.loadRules()
     let value = Int(sender.doubleValue.rounded())
     rules[index].brightness = value
     ScheduledBrightnessManager.saveRules(rules)
