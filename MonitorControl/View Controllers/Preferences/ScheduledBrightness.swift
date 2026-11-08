@@ -135,19 +135,20 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     contentStackView.orientation = .vertical
     contentStackView.alignment = .leading
     contentStackView.spacing = 12
-    contentStackView.edgeInsets = NSEdgeInsets(top: 4, left: 4, bottom: 4, right: 4)
 
-    let scrollView = NSScrollView()
-    scrollView.hasVerticalScroller = true
-    scrollView.drawsBackground = false
-    scrollView.documentView = contentStackView
+    // Plain container with the stack pinned inside. The Settings framework sizes
+    // the window from the pane view's fittingSize, so the container must derive
+    // its size from content constraints (a scroll view would collapse to zero).
+    let containerView = NSView()
+    containerView.addSubview(contentStackView)
     contentStackView.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      contentStackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 12),
-      contentStackView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor, constant: 12),
-      contentStackView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor, constant: -24),
+      contentStackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
+      contentStackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
+      contentStackView.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -16),
+      contentStackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
     ])
-    self.view = scrollView
+    self.view = containerView
     self.reloadRules()
   }
 
@@ -166,6 +167,25 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
       for rule in rules {
         self.rulesStackView.addArrangedSubview(self.makeRow(rule: rule))
       }
+    }
+    self.syncWindowSize()
+  }
+
+  /// Keep the prefs window size in sync when rules are added or removed.
+  private func syncWindowSize() {
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, let window = self.view.window else {
+        return
+      }
+      let contentSize = self.view.fittingSize
+      guard contentSize.width > 1, contentSize.height > 1 else {
+        return
+      }
+      let newFrame = window.frameRect(forContentRect: CGRect(origin: .zero, size: contentSize))
+      var frame = window.frame
+      frame.origin.y += window.frame.height - newFrame.height
+      frame.size = NSSize(width: max(frame.width, newFrame.width), height: newFrame.height)
+      window.setFrame(frame, animate: true)
     }
   }
 
