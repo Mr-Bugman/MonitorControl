@@ -381,7 +381,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     let deleteButton: NSButton
     if #available(macOS 11.0, *) {
       deleteButton = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: self.s("删除", "Delete"))!, target: self, action: #selector(self.ruleDeleted(_:)))
-      deleteButton.bezelStyle = .borderless
+      deleteButton.isBordered = false
       deleteButton.contentTintColor = .secondaryLabelColor
     } else {
       deleteButton = NSButton(title: self.s("删除", "Delete"), target: self, action: #selector(self.ruleDeleted(_:)))
