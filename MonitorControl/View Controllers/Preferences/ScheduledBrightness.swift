@@ -7,7 +7,7 @@ import Settings
 
 // MARK: - Model
 
-enum DisplayScope: Int {
+enum DisplayScope: Int, Codable {
   case all = 0
   case externalOnly = 1
   case builtInOnly = 2
