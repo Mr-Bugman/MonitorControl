@@ -262,6 +262,27 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     self.updateDocumentFrame()
   }
 
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    // If the settings window was reopened while this pane is selected, the
+    // framework may not have re-framed it; tighten the height to the pane size.
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self, let window = self.view.window else {
+        return
+      }
+      let contentRect = window.contentRect(forFrameRect: window.frame)
+      let target = ScheduledBrightnessPrefsViewController.paneHeight
+      guard abs(contentRect.height - target) > 2 else {
+        return
+      }
+      let newFrame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: contentRect.width, height: target))
+      var frame = window.frame
+      frame.origin.y += window.frame.height - newFrame.height
+      frame.size = newFrame.size
+      window.setFrame(frame, display: true, animate: true)
+    }
+  }
+
   private func updateDocumentFrame() {
     guard let scrollView = self.scrollView, let docView = self.docView else {
       return
@@ -307,12 +328,14 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   }
 
   private func makeSeparator() -> NSView {
+    // No explicit width here: the rules stack's `.width` alignment already
+    // stretches arranged subviews, and a second width constraint would
+    // conflict (required vs required) and break the stack's positioning.
     let separator = NSView()
     separator.translatesAutoresizingMaskIntoConstraints = false
     separator.wantsLayer = true
     separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
     separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
-    separator.widthAnchor.constraint(equalTo: self.rulesStackView.widthAnchor, constant: -28).isActive = true
     return separator
   }
 
