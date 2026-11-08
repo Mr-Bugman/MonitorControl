@@ -1,5 +1,5 @@
 //  Copyright © MonitorControl. @JoniVR, @theOneyouseek, @waydabber and others
-//  Scheduled brightness feature: timed rules that set all displays to a chosen brightness.
+//  Scheduled brightness feature: timed rules that set displays to a chosen brightness.
 
 import Cocoa
 import os.log
@@ -7,13 +7,54 @@ import Settings
 
 // MARK: - Model
 
-struct BrightnessSchedule: Codable, Equatable {
+enum DisplayScope: Int {
+  case all = 0
+  case externalOnly = 1
+  case builtInOnly = 2
+}
+
+struct BrightnessSchedule: Equatable {
   var id: String = UUID().uuidString
   var enabled: Bool = true
   var hour: Int
   var minute: Int
   /// Target brightness, 0-100 (%)
   var brightness: Int
+  /// Which displays this rule applies to
+  var scope: DisplayScope = .all
+
+  init(hour: Int, minute: Int, brightness: Int, scope: DisplayScope = .all) {
+    self.hour = hour
+    self.minute = minute
+    self.brightness = brightness
+    self.scope = scope
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.id = try container.decodeIfPresent(String.self, forKey: .id) ?? UUID().uuidString
+    self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    self.hour = try container.decode(Int.self, forKey: .hour)
+    self.minute = try container.decode(Int.self, forKey: .minute)
+    self.brightness = try container.decode(Int.self, forKey: .brightness)
+    self.scope = try container.decodeIfPresent(DisplayScope.self, forKey: .scope) ?? .all
+  }
+}
+
+extension BrightnessSchedule: Codable {
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(self.id, forKey: .id)
+    try container.encode(self.enabled, forKey: .enabled)
+    try container.encode(self.hour, forKey: .hour)
+    try container.encode(self.minute, forKey: .minute)
+    try container.encode(self.brightness, forKey: .brightness)
+    try container.encode(self.scope.rawValue, forKey: .scope)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, enabled, hour, minute, brightness, scope
+  }
 }
 
 // MARK: - Scheduler
@@ -53,7 +94,7 @@ final class ScheduledBrightnessManager {
           continue
         }
         self.firedKeys.insert(fireKey)
-        self.applyBrightness(rule.brightness)
+        self.applyBrightness(rule.brightness, scope: rule.scope)
       } else {
         self.firedKeys.remove(fireKey)
       }
@@ -63,14 +104,21 @@ final class ScheduledBrightnessManager {
     }
   }
 
-  func applyBrightness(_ percent: Int) {
+  func applyBrightness(_ percent: Int, scope: DisplayScope) {
     let value = min(max(Float(percent) / 100.0, 0.0), 1.0)
     DispatchQueue.main.async {
-      os_log("Scheduled brightness: applying %d percent to all affected displays.", type: .info, percent)
-      if let displays = DisplayManager.shared.getAffectedDisplays(isBrightness: true) {
-        for display in displays {
-          _ = display.setSmoothBrightness(value)
+      os_log("Scheduled brightness: applying %d percent (scope %d) to displays.", type: .info, percent, scope.rawValue)
+      for display in DisplayManager.shared.getAllDisplays() {
+        let isBuiltIn = CGDisplayIsBuiltin(display.identifier) != 0
+        switch scope {
+        case .all:
+          break
+        case .externalOnly:
+          guard !isBuiltIn else { continue }
+        case .builtInOnly:
+          guard isBuiltIn else { continue }
         }
+        _ = display.setSmoothBrightness(value)
       }
     }
   }
@@ -81,7 +129,8 @@ final class ScheduledBrightnessManager {
     guard let data = prefs.data(forKey: PrefKey.scheduledBrightnessRules.rawValue) else {
       return []
     }
-    return (try? JSONDecoder().decode([BrightnessSchedule].self, from: data)) ?? []
+    let rules = try? JSONDecoder().decode([BrightnessSchedule].self, from: data)
+    return rules ?? []
   }
 
   static func saveRules(_ rules: [BrightnessSchedule]) {
@@ -94,6 +143,12 @@ final class ScheduledBrightnessManager {
 // MARK: - Preferences pane
 
 final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPane {
+  /// Fixed pane size: matches the 730pt width of the storyboard panes so the
+  /// window does not jitter horizontally; height sits in the middle of the
+  /// range used by the other panes (308-676).
+  private static let paneWidth: CGFloat = 730
+  private static let paneHeight: CGFloat = 520
+
   let paneIdentifier: Settings.PaneIdentifier = .scheduledBrightness
   let paneTitle: String = ScheduledBrightnessPrefsViewController.isChineseUI ? "定时亮度" : "Scheduled Brightness"
 
@@ -117,11 +172,11 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   }
 
   override func loadView() {
-    let headerText = NSTextField(labelWithString: self.s("在设定的时间自动将所有屏幕亮度调整到指定值。", "Automatically set all displays to the chosen brightness at the chosen times."))
+    let headerText = NSTextField(labelWithString: self.s("在设定的时间自动将所选屏幕亮度调整到指定值。", "Automatically set the chosen displays to the chosen brightness at the chosen times."))
     headerText.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
     headerText.textColor = .secondaryLabelColor
     headerText.lineBreakMode = .byWordWrapping
-    headerText.preferredMaxLayoutWidth = 420
+    headerText.preferredMaxLayoutWidth = ScheduledBrightnessPrefsViewController.paneWidth - 40
 
     let addButton = NSButton(title: self.s("＋ 添加定时", "＋ Add schedule"), target: self, action: #selector(self.addRule(_:)))
     addButton.bezelStyle = .rounded
@@ -136,17 +191,29 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     contentStackView.alignment = .leading
     contentStackView.spacing = 12
 
-    // Plain container with the stack pinned inside. The Settings framework sizes
-    // the window from the pane view's fittingSize, so the container must derive
-    // its size from content constraints (a scroll view would collapse to zero).
-    let containerView = NSView()
-    containerView.addSubview(contentStackView)
+    // The rules area scrolls inside the pane so the window size stays fixed
+    // no matter how many rules are added.
+    let scrollView = NSScrollView()
+    scrollView.hasVerticalScroller = true
+    scrollView.drawsBackground = false
+    scrollView.documentView = contentStackView
     contentStackView.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      contentStackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
-      contentStackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 16),
-      contentStackView.trailingAnchor.constraint(lessThanOrEqualTo: containerView.trailingAnchor, constant: -16),
-      contentStackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+      contentStackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 0),
+      contentStackView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor, constant: 0),
+      contentStackView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor, constant: -16),
+    ])
+
+    let containerView = NSView()
+    containerView.addSubview(scrollView)
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
+      scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
+      scrollView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
+      scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
+      containerView.widthAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneWidth),
+      containerView.heightAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneHeight),
     ])
     self.view = containerView
     self.reloadRules()
@@ -167,25 +234,6 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
       for rule in rules {
         self.rulesStackView.addArrangedSubview(self.makeRow(rule: rule))
       }
-    }
-    self.syncWindowSize()
-  }
-
-  /// Keep the prefs window size in sync when rules are added or removed.
-  private func syncWindowSize() {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self, let window = self.view.window else {
-        return
-      }
-      let contentSize = self.view.fittingSize
-      guard contentSize.width > 1, contentSize.height > 1 else {
-        return
-      }
-      let newFrame = window.frameRect(forContentRect: CGRect(origin: .zero, size: contentSize))
-      var frame = window.frame
-      frame.origin.y += window.frame.height - newFrame.height
-      frame.size = NSSize(width: max(frame.width, newFrame.width), height: newFrame.height)
-      window.setFrame(frame, display: true, animate: true)
     }
   }
 
@@ -210,6 +258,17 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     datePicker.action = #selector(self.ruleTimeChanged(_:))
     datePicker.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
+    let scopePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    scopePopup.addItems(withTitles: [
+      self.s("所有屏幕", "All displays"),
+      self.s("仅外接", "External only"),
+      self.s("仅内建", "Built-in only"),
+    ])
+    scopePopup.selectItem(at: rule.scope.rawValue)
+    scopePopup.target = self
+    scopePopup.action = #selector(self.ruleScopeChanged(_:))
+    scopePopup.identifier = NSUserInterfaceItemIdentifier(rule.id)
+
     let slider = NSSlider(value: Double(rule.brightness), minValue: 0, maxValue: 100, target: self, action: #selector(self.ruleBrightnessChanged(_:)))
     slider.isContinuous = true
     slider.widthAnchor.constraint(equalToConstant: 150).isActive = true
@@ -222,7 +281,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     deleteButton.bezelStyle = .rounded
     deleteButton.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
-    let row = NSStackView(views: [enableSwitch, datePicker, slider, percentLabel, deleteButton])
+    let row = NSStackView(views: [enableSwitch, datePicker, scopePopup, slider, percentLabel, deleteButton])
     row.orientation = .horizontal
     row.spacing = 8
     return row
@@ -240,9 +299,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
 
   @objc private func addRule(_ sender: Any?) {
     var rules = ScheduledBrightnessManager.loadRules()
-    let defaultComponents = DateComponents(hour: 22, minute: 0)
-    let hour = Calendar.current.date(from: defaultComponents).map { Calendar.current.component(.hour, from: $0) } ?? 22
-    rules.append(BrightnessSchedule(hour: hour, minute: 0, brightness: 30))
+    rules.append(BrightnessSchedule(hour: 22, minute: 0, brightness: 30))
     ScheduledBrightnessManager.saveRules(rules)
     self.reloadRules()
   }
@@ -274,6 +331,15 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     let components = Calendar.current.dateComponents([.hour, .minute], from: sender.dateValue)
     rules[index].hour = components.hour ?? 0
     rules[index].minute = components.minute ?? 0
+    ScheduledBrightnessManager.saveRules(rules)
+  }
+
+  @objc private func ruleScopeChanged(_ sender: NSPopUpButton) {
+    guard let id = self.controlID(sender), let index = self.rule(withID: id), let scope = DisplayScope(rawValue: sender.indexOfSelectedItem) else {
+      return
+    }
+    var rules = ScheduledBrightnessManager.loadRules()
+    rules[index].scope = scope
     ScheduledBrightnessManager.saveRules(rules)
   }
 
