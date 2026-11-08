@@ -185,7 +185,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
       var frame = window.frame
       frame.origin.y += window.frame.height - newFrame.height
       frame.size = NSSize(width: max(frame.width, newFrame.width), height: newFrame.height)
-      window.setFrame(frame, animate: true)
+      window.setFrame(frame, display: true, animate: true)
     }
   }
 
