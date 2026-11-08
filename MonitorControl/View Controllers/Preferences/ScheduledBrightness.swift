@@ -170,13 +170,10 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
   }
 
   private func makeRow(rule: BrightnessSchedule) -> NSView {
-    let enableSwitch = NSButton(title: "", target: self, action: #selector(self.ruleToggled(_:)))
-    if #available(macOS 11.0, *) {
-      enableSwitch.setButtonType(.switch)
-    } else {
-      enableSwitch.setButtonType(.checkbox)
-    }
+    let enableSwitch = NSSwitch()
     enableSwitch.state = rule.enabled ? .on : .off
+    enableSwitch.target = self
+    enableSwitch.action = #selector(self.ruleToggled(_:))
     enableSwitch.toolTip = self.s("启用此定时", "Enable this schedule")
     enableSwitch.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
@@ -240,7 +237,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     self.reloadRules()
   }
 
-  @objc private func ruleToggled(_ sender: NSButton) {
+  @objc private func ruleToggled(_ sender: NSSwitch) {
     guard let id = self.controlID(sender), let index = self.rule(withID: id) else {
       return
     }
