@@ -160,6 +160,9 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     }
   }
 
+  private var scrollView: NSScrollView!
+  private var docView: NSView!
+  private var contentStackView: NSStackView!
   private var rulesStackView: NSStackView!
   private var percentLabels: [String: NSTextField] = [:]
 
@@ -176,32 +179,43 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     headerText.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
     headerText.textColor = .secondaryLabelColor
     headerText.lineBreakMode = .byWordWrapping
-    headerText.preferredMaxLayoutWidth = ScheduledBrightnessPrefsViewController.paneWidth - 40
+    headerText.alignment = .center
+    headerText.preferredMaxLayoutWidth = ScheduledBrightnessPrefsViewController.paneWidth - 80
 
     let addButton = NSButton(title: self.s("＋ 添加定时", "＋ Add schedule"), target: self, action: #selector(self.addRule(_:)))
     addButton.bezelStyle = .rounded
 
+    let noteText = NSTextField(labelWithString: self.s("规则较多时此区域内部滚动，窗口大小保持不变。", "The list scrolls inside the pane when it grows; the window size stays fixed."))
+    noteText.font = NSFont.systemFont(ofSize: 11)
+    noteText.textColor = .tertiaryLabelColor
+    noteText.alignment = .center
+
     self.rulesStackView = NSStackView(views: [])
     self.rulesStackView.orientation = .vertical
-    self.rulesStackView.alignment = .leading
+    self.rulesStackView.alignment = .centerX
     self.rulesStackView.spacing = 10
 
-    let contentStackView = NSStackView(views: [headerText, self.rulesStackView, addButton])
-    contentStackView.orientation = .vertical
-    contentStackView.alignment = .leading
-    contentStackView.spacing = 12
+    self.contentStackView = NSStackView(views: [headerText, self.rulesStackView, addButton, noteText])
+    self.contentStackView.orientation = .vertical
+    self.contentStackView.alignment = .centerX
+    self.contentStackView.spacing = 14
 
-    // The rules area scrolls inside the pane so the window size stays fixed
-    // no matter how many rules are added.
+    // Frame-based document view hosting an Auto Layout stack: the document
+    // height is measured from the stack's fitting size, which keeps the
+    // content top-anchored (no dead space) and scrolling reliable.
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
     scrollView.drawsBackground = false
-    scrollView.documentView = contentStackView
-    contentStackView.translatesAutoresizingMaskIntoConstraints = false
+    let docView = NSView()
+    scrollView.documentView = docView
+    self.scrollView = scrollView
+    self.docView = docView
+    docView.addSubview(self.contentStackView)
+    self.contentStackView.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-      contentStackView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor, constant: 0),
-      contentStackView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor, constant: 0),
-      contentStackView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor, constant: -16),
+      self.contentStackView.topAnchor.constraint(equalTo: docView.topAnchor, constant: 18),
+      self.contentStackView.centerXAnchor.constraint(equalTo: docView.centerXAnchor),
+      self.contentStackView.widthAnchor.constraint(lessThanOrEqualTo: docView.widthAnchor, constant: -48),
     ])
 
     let containerView = NSView()
@@ -217,6 +231,23 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     ])
     self.view = containerView
     self.reloadRules()
+  }
+
+  override func viewDidLayout() {
+    super.viewDidLayout()
+    self.updateDocumentFrame()
+  }
+
+  private func updateDocumentFrame() {
+    guard let scrollView = self.scrollView, let docView = self.docView else {
+      return
+    }
+    let clipBounds = scrollView.contentView.bounds
+    let fittingHeight = self.contentStackView.fittingSize.height
+    let newHeight = max(fittingHeight + 16, clipBounds.height)
+    if abs(docView.frame.height - newHeight) > 0.5 || abs(docView.frame.width - clipBounds.width) > 0.5 {
+      docView.frame = NSRect(x: 0, y: 0, width: clipBounds.width, height: newHeight)
+    }
   }
 
   // MARK: Rule rows
@@ -235,6 +266,9 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
         self.rulesStackView.addArrangedSubview(self.makeRow(rule: rule))
       }
     }
+    DispatchQueue.main.async { [weak self] in
+      self?.updateDocumentFrame()
+    }
   }
 
   private func makeRow(rule: BrightnessSchedule) -> NSView {
@@ -246,7 +280,11 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     enableSwitch.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
     let datePicker = NSDatePicker()
-    datePicker.datePickerStyle = .clockAndCalendar
+    if #available(macOS 10.15.4, *) {
+      datePicker.datePickerStyle = .textField
+    } else {
+      datePicker.datePickerStyle = .clockAndCalendar
+    }
     datePicker.datePickerElements = .hourMinute
     datePicker.datePickerMode = .single
     datePicker.timeZone = TimeZone.current
