@@ -120,6 +120,8 @@ final class ScheduledBrightnessManager {
         }
         _ = display.setSmoothBrightness(value)
       }
+      // Keep the menu bar sliders in sync (live update if the menu is open).
+      menu?.updateMenus(dontClose: true)
     }
   }
 
@@ -143,11 +145,12 @@ final class ScheduledBrightnessManager {
 // MARK: - Preferences pane
 
 final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPane {
-  /// Fixed pane size: matches the 730pt width of the storyboard panes so the
-  /// window does not jitter horizontally; height sits in the middle of the
-  /// range used by the other panes (308-676).
+  /// Preferred pane size: matches the 730pt width of the storyboard panes.
+  /// The size constraints use a slightly-lower-than-required priority so the
+  /// Settings framework's pin-to-window constraints always win and the window
+  /// never ends up fighting the pane for size.
   private static let paneWidth: CGFloat = 730
-  private static let paneHeight: CGFloat = 520
+  private static let paneHeight: CGFloat = 480
 
   let paneIdentifier: Settings.PaneIdentifier = .scheduledBrightness
   let paneTitle: String = ScheduledBrightnessPrefsViewController.isChineseUI ? "定时亮度" : "Scheduled Brightness"
@@ -182,8 +185,7 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     headerText.alignment = .center
     headerText.preferredMaxLayoutWidth = ScheduledBrightnessPrefsViewController.paneWidth - 80
 
-    let addButton = NSButton(title: self.s("＋ 添加定时", "＋ Add schedule"), target: self, action: #selector(self.addRule(_:)))
-    addButton.bezelStyle = .rounded
+    let addButton = self.makeAddButton()
 
     let noteText = NSTextField(labelWithString: self.s("规则较多时此区域内部滚动，窗口大小保持不变。", "The list scrolls inside the pane when it grows; the window size stays fixed."))
     noteText.font = NSFont.systemFont(ofSize: 11)
@@ -192,10 +194,28 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
 
     self.rulesStackView = NSStackView(views: [])
     self.rulesStackView.orientation = .vertical
-    self.rulesStackView.alignment = .centerX
-    self.rulesStackView.spacing = 10
+    self.rulesStackView.alignment = .width
+    self.rulesStackView.spacing = 0
 
-    self.contentStackView = NSStackView(views: [headerText, self.rulesStackView, addButton, noteText])
+    // Grouped card container in System Settings style.
+    let cardView = NSView()
+    cardView.wantsLayer = true
+    cardView.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+    cardView.layer?.borderColor = NSColor.separatorColor.cgColor
+    cardView.layer?.borderWidth = 1
+    cardView.layer?.cornerRadius = 10
+    cardView.layer?.masksToBounds = true
+    cardView.widthAnchor.constraint(equalToConstant: 600).isActive = true
+    cardView.addSubview(self.rulesStackView)
+    self.rulesStackView.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      self.rulesStackView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 4),
+      self.rulesStackView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -4),
+      self.rulesStackView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+      self.rulesStackView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+    ])
+
+    self.contentStackView = NSStackView(views: [headerText, cardView, addButton, noteText])
     self.contentStackView.orientation = .vertical
     self.contentStackView.alignment = .centerX
     self.contentStackView.spacing = 14
@@ -221,13 +241,17 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
     let containerView = NSView()
     containerView.addSubview(scrollView)
     scrollView.translatesAutoresizingMaskIntoConstraints = false
+    let widthConstraint = containerView.widthAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneWidth)
+    let heightConstraint = containerView.heightAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneHeight)
+    widthConstraint.priority = NSLayoutConstraint.Priority(999)
+    heightConstraint.priority = NSLayoutConstraint.Priority(999)
     NSLayoutConstraint.activate([
       scrollView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 16),
       scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 20),
       scrollView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -20),
       scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -16),
-      containerView.widthAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneWidth),
-      containerView.heightAnchor.constraint(equalToConstant: ScheduledBrightnessPrefsViewController.paneHeight),
+      widthConstraint,
+      heightConstraint,
     ])
     self.view = containerView
     self.reloadRules()
@@ -260,15 +284,52 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
       let emptyLabel = NSTextField(labelWithString: self.s("暂无定时规则，点击下方按钮添加。", "No schedules yet. Click the button below to add one."))
       emptyLabel.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
       emptyLabel.textColor = .secondaryLabelColor
-      self.rulesStackView.addArrangedSubview(emptyLabel)
+      let emptyWrapper = NSView()
+      emptyWrapper.addSubview(emptyLabel)
+      emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+      NSLayoutConstraint.activate([
+        emptyLabel.centerXAnchor.constraint(equalTo: emptyWrapper.centerXAnchor),
+        emptyLabel.topAnchor.constraint(equalTo: emptyWrapper.topAnchor, constant: 14),
+        emptyLabel.bottomAnchor.constraint(equalTo: emptyWrapper.bottomAnchor, constant: -14),
+      ])
+      self.rulesStackView.addArrangedSubview(emptyWrapper)
     } else {
-      for rule in rules {
+      for (index, rule) in rules.enumerated() {
+        if index > 0 {
+          self.rulesStackView.addArrangedSubview(self.makeSeparator())
+        }
         self.rulesStackView.addArrangedSubview(self.makeRow(rule: rule))
       }
     }
     DispatchQueue.main.async { [weak self] in
       self?.updateDocumentFrame()
     }
+  }
+
+  private func makeSeparator() -> NSView {
+    let separator = NSView()
+    separator.translatesAutoresizingMaskIntoConstraints = false
+    separator.wantsLayer = true
+    separator.layer?.backgroundColor = NSColor.separatorColor.cgColor
+    separator.heightAnchor.constraint(equalToConstant: 1).isActive = true
+    separator.widthAnchor.constraint(equalTo: self.rulesStackView.widthAnchor, constant: -28).isActive = true
+    return separator
+  }
+
+  private func makeAddButton() -> NSButton {
+    let title = self.s("＋ 添加定时", "＋ Add schedule")
+    let addButton = NSButton(title: title, target: self, action: #selector(self.addRule(_:)))
+    addButton.isBordered = false
+    addButton.wantsLayer = true
+    addButton.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+    addButton.layer?.cornerRadius = 7
+    addButton.attributedTitle = NSAttributedString(string: title, attributes: [
+      .foregroundColor: NSColor.white,
+      .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+    ])
+    addButton.widthAnchor.constraint(equalToConstant: 110).isActive = true
+    addButton.heightAnchor.constraint(equalToConstant: 30).isActive = true
+    return addButton
   }
 
   private func makeRow(rule: BrightnessSchedule) -> NSView {
@@ -309,19 +370,31 @@ final class ScheduledBrightnessPrefsViewController: NSViewController, SettingsPa
 
     let slider = NSSlider(value: Double(rule.brightness), minValue: 0, maxValue: 100, target: self, action: #selector(self.ruleBrightnessChanged(_:)))
     slider.isContinuous = true
-    slider.widthAnchor.constraint(equalToConstant: 150).isActive = true
+    slider.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+    slider.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(1), for: .horizontal)
     slider.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
     let percentLabel = NSTextField(labelWithString: "\(rule.brightness)%")
+    percentLabel.alignment = .right
     self.percentLabels[rule.id] = percentLabel
 
-    let deleteButton = NSButton(title: self.s("删除", "Delete"), target: self, action: #selector(self.ruleDeleted(_:)))
-    deleteButton.bezelStyle = .rounded
+    let deleteButton: NSButton
+    if #available(macOS 11.0, *) {
+      deleteButton = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: self.s("删除", "Delete"))!, target: self, action: #selector(self.ruleDeleted(_:)))
+      deleteButton.bezelStyle = .borderless
+      deleteButton.contentTintColor = .secondaryLabelColor
+    } else {
+      deleteButton = NSButton(title: self.s("删除", "Delete"), target: self, action: #selector(self.ruleDeleted(_:)))
+      deleteButton.bezelStyle = .rounded
+    }
     deleteButton.identifier = NSUserInterfaceItemIdentifier(rule.id)
 
     let row = NSStackView(views: [enableSwitch, datePicker, scopePopup, slider, percentLabel, deleteButton])
     row.orientation = .horizontal
-    row.spacing = 8
+    row.alignment = .centerY
+    row.distribution = .fill
+    row.spacing = 10
+    row.edgeInsets = NSEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
     return row
   }
 
